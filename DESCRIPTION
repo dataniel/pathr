@@ -1,0 +1,38 @@
+Package: pathr
+Title: Frictionless File Paths in R and RStudio
+Version: 0.1.0
+Authors@R: person("Daniel", "Madsen", email = "danielmadsen@live.dk",
+    role = c("aut", "cre"))
+Description: Small tools that take the friction out of working with file
+    paths on Windows. A keyboard-driven file browser that hands marked
+    paths back to R, ready to read; a function and an addin that open a
+    path in the system file explorer; and RStudio addins that turn pasted
+    Windows paths, including a whole list copied from the file explorer,
+    into valid R strings.
+License: MIT + file LICENSE
+URL: https://dataniel.github.io/pathr, https://github.com/dataniel/pathr
+BugReports: https://github.com/dataniel/pathr/issues
+Encoding: UTF-8
+Language: en
+Roxygen: list(markdown = TRUE)
+Depends:
+    R (>= 4.1)
+Imports:
+    cli,
+    tibble,
+    tools,
+    utils
+Suggests:
+    bslib,
+    readxl,
+    rstudioapi,
+    shiny (>= 1.6.0),
+    testthat (>= 3.0.0),
+    withr,
+    knitr,
+    rmarkdown,
+    pkgdown
+Config/Needs/website: pkgdown
+Config/testthat/edition: 3
+VignetteBuilder: knitr
+Config/roxygen2/version: 8.0.0

@@ -1,0 +1,34 @@
+url: https://dataniel.github.io/pathr
+
+template:
+  bootstrap: 5
+
+navbar:
+  structure:
+    left: [intro, reference, articles]
+    right: [github]
+  components:
+    github:
+      icon: fab fa-github
+      href: https://github.com/dataniel/pathr
+
+home:
+  strip_header: true
+
+reference:
+  - title: Start here
+    contents:
+      - pathr-package
+
+  - title: Grab and open paths
+    contents:
+      - browse_files
+      - open_in_explorer
+
+  - title: RStudio addins
+    contents:
+      - addin_open_in_explorer
+      - addin_paste_path
+      - addin_fix_path
+      - addin_flip_backslash
+      - addin_text_to_vector

@@ -1,0 +1,24 @@
+Name: Text to vector
+Description: Convert selected lines to an R character vector expression c("a", "b", "c"). Empty lines are ignored; quotes around a line (as from Copy as path) are dropped and backslashes flipped.
+Binding: addin_text_to_vector
+Interactive: false
+
+Name: Paste path from clipboard
+Description: Read Windows paths from the clipboard, flip backslashes, and insert them at the cursor: one path as a quoted R string, several as a c(...) vector.
+Binding: addin_paste_path
+Interactive: false
+
+Name: Fix Windows paths
+Description: Replace backslashes with forward slashes in Windows-style paths. Operates on the selected text, or the entire file if nothing is selected.
+Binding: addin_fix_path
+Interactive: false
+
+Name: Flip backslashes
+Description: Replace all backslashes with forward slashes in the selected text.
+Binding: addin_flip_backslash
+Interactive: false
+
+Name: Open in file explorer
+Description: Open the selected path (or path object) in the file explorer, revealing files in their folder. With nothing selected, opens the working directory.
+Binding: addin_open_in_explorer
+Interactive: false

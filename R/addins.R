@@ -1,0 +1,255 @@
+# Matches Windows drive paths (C:\...) and UNC paths (\\server\...)
+# and replaces backslashes with forward slashes within them.
+# Avoids \(x) lambda syntax, \n, \t etc. by requiring path-like continuation.
+.fix_windows_paths <- function(text) {
+  m <- gregexpr("(?:[A-Za-z]:\\\\|\\\\\\\\)[^\\s\"']*", text, perl = TRUE)
+  regmatches(text, m) <- lapply(regmatches(text, m), \(x) gsub("\\\\", "/", x))
+  text
+}
+
+# Every addin needs rstudioapi; abort with one shared message if it is missing.
+.need_rstudio <- function() {
+  if (!requireNamespace("rstudioapi", quietly = TRUE))
+    cli::cli_abort("Package {.pkg rstudioapi} is required to use this addin.")
+}
+
+# Split text into one item per line, ready to be quoted as R strings. Blank
+# lines are dropped, and so is a pair of quotes around a line: the file
+# explorer's "Copy as path" (Ctrl+Shift+C) wraps every path in double quotes,
+# which would otherwise end up doubled. Every backslash becomes a forward
+# slash -- inside an R string literal a lone backslash is an escape, so there
+# is nothing worth keeping.
+.path_lines <- function(text) {
+  lines <- trimws(unlist(strsplit(text, "\r?\n")))
+  lines <- sub('^(["\'])(.*)\\1$', "\\2", lines)
+  lines <- gsub("\\\\", "/", lines)
+  lines[nzchar(lines)]
+}
+
+# R source for a character vector, one element per line.
+.r_vector <- function(items) {
+  paste0("c(\n", paste0('  "', items, '"', collapse = ",\n"), "\n)")
+}
+
+#' RStudio addin: convert lines to an R character vector
+#'
+#' Converts the selected text (one item per line) to an R character vector
+#' expression, e.g. `c("a", "b", "c")`. Empty lines are ignored.
+#'
+#' It is made for lists of paths: select the lines the file explorer's
+#' *Copy as path* (`Ctrl+Shift+C` on several files) pastes, and the quotes
+#' around each path are dropped and the backslashes flipped, so
+#' `"C:\data\jan.csv"` becomes `"C:/data/jan.csv"` rather than invalid R.
+#' Any other list -- CVR numbers, variable names, a column copied from
+#' Excel -- is quoted as it stands.
+#'
+#' @seealso [addin_paste_path()], which does the same straight from the
+#'   clipboard.
+#'
+#' @export
+addin_text_to_vector <- function() {
+  .need_rstudio()
+
+  ctx <- rstudioapi::getActiveDocumentContext()
+  sel <- ctx$selection[[1]]
+
+  items <- .path_lines(sel$text)
+  if (length(items) == 0)
+    cli::cli_abort("No text selected. Select one or more lines to convert.")
+
+  rstudioapi::modifyRange(sel$range, .r_vector(items), ctx$id)
+}
+
+#' RStudio addin: paste paths from the clipboard
+#'
+#' Reads Windows paths from the clipboard, replaces backslashes with forward
+#' slashes, and inserts them at the cursor: one path as a quoted R string,
+#' several (one per line, as *Copy as path* gives them for several files) as
+#' a `c(...)` vector. Quotes around a copied path are dropped, so the
+#' explorer's *Copy as path* pastes as `"C:/data/jan.csv"`, not
+#' `""C:/data/jan.csv""`.
+#'
+#' @seealso [addin_text_to_vector()] for a list already in the file.
+#'
+#' @export
+addin_paste_path <- function() {
+  .need_rstudio()
+
+  items <- .path_lines(paste(utils::readClipboard(), collapse = "\n"))
+  if (length(items) == 0)
+    cli::cli_abort("Clipboard is empty.")
+
+  out <- if (length(items) == 1L) paste0('"', items, '"') else .r_vector(items)
+  rstudioapi::insertText(out)
+}
+
+# Resolve a piece of selected text to a filesystem path. A literal path that
+# exists on disk is used as-is; otherwise the text is evaluated as R code in
+# `envir` (e.g. an object or call that returns a path). Falls back to the
+# unquoted literal so the caller can report a helpful "does not exist" error.
+.resolve_path_text <- function(text, envir = globalenv()) {
+  text <- trimws(text)
+  if (!nzchar(text)) return(NULL)
+
+  unquoted <- sub('^(["\'])(.*)\\1$', "\\2", text)
+  if (file.exists(unquoted)) return(unquoted)
+
+  val <- tryCatch(eval(parse(text = text), envir = envir), error = function(e) NULL)
+  if (is.character(val) && length(val) == 1L && nzchar(val)) return(val)
+
+  unquoted
+}
+
+# Extract the path-like token surrounding a cursor position on a single line,
+# so the addin works when the cursor merely sits on an object/path without a
+# selection. `col` is the 1-based cursor column (the gap before that
+# character). Token characters cover bare R names and unquoted paths
+# (letters, digits, `_ . : / \ ~ -`); spaces end the token, so paths with
+# spaces still need to be selected. Returns "" when the cursor is on
+# whitespace or an empty line.
+.token_at_cursor <- function(line, col) {
+  if (length(line) != 1L || is.na(line) || !nzchar(line)) return("")
+
+  n <- nchar(line)
+  col <- max(1L, min(as.integer(col), n + 1L))
+  is_tok <- function(ch) grepl("[A-Za-z0-9_.:/\\\\~-]", ch)
+
+  left <- col
+  while (left > 1L && is_tok(substr(line, left - 1L, left - 1L))) left <- left - 1L
+  right <- col - 1L
+  while (right < n && is_tok(substr(line, right + 1L, right + 1L))) right <- right + 1L
+
+  if (right < left) return("")
+  substr(line, left, right)
+}
+
+# Open `path` in the system file explorer. A directory is opened directly; a
+# file is opened by revealing it (selected) inside its containing folder.
+.open_in_explorer <- function(path) {
+  if (!file.exists(path))
+    cli::cli_abort("Path does not exist: {.path {path}}")
+
+  is_dir <- isTRUE(file.info(path)$isdir)
+
+  if (.Platform$OS.type == "windows") {
+    full <- normalizePath(path, winslash = "\\", mustWork = TRUE)
+    # Launch through PowerShell's Start-Process so the Explorer window comes to
+    # the foreground; `shell.exec`/`explorer` via cmd tend to open behind the
+    # active window. A directory is opened directly; a file is revealed
+    # (selected) in its folder via `/select`. The command is piped over stdin
+    # (`-Command -`) so the path needs no command-line quoting and tolerates
+    # spaces.
+    arg <- if (is_dir) paste0('"', full, '"') else paste0('/select,"', full, '"')
+    ps  <- paste0("Start-Process explorer.exe -ArgumentList '", arg, "'")
+    system2("powershell", c("-NoProfile", "-Command", "-"),
+            input = ps, stdout = FALSE, stderr = FALSE)
+  } else {
+    target <- if (is_dir) path else dirname(path)
+    opener <- if (Sys.info()[["sysname"]] == "Darwin") "open" else "xdg-open"
+    system2(opener, shQuote(normalizePath(target, mustWork = TRUE)))
+  }
+  invisible(path)
+}
+
+#' Open a path in the system file explorer
+#'
+#' Opens a directory directly, or reveals a file (selected) inside its
+#' containing folder. The console counterpart of [addin_open_in_explorer()].
+#' On Windows the explorer window comes to the foreground; opened through
+#' `shell.exec()` it tends to land behind RStudio.
+#'
+#' Being exported, it can also be the target of a clickable link in a cli
+#' message, `{.run pathr::open_in_explorer('C:/data')}`: RStudio only runs
+#' link code of the form `pkg::fun(args)`.
+#'
+#' @param path A file or directory path. Defaults to the working directory.
+#'
+#' @return `path`, invisibly.
+#'
+#' @examples
+#' \dontrun{
+#' open_in_explorer("C:/data/2026")
+#' open_in_explorer(my_dir)   # a variable holding a path works too
+#' }
+#'
+#' @export
+open_in_explorer <- function(path = getwd()) {
+  .open_in_explorer(path)
+}
+
+#' RStudio addin: open path in file explorer
+#'
+#' Opens a location in the system file explorer. The target is resolved to a
+#' path in this order:
+#' \itemize{
+#'   \item the selected text, if any;
+#'   \item otherwise the path-like token under the cursor (so you can just
+#'     place the cursor on a path or an object holding one, no selection
+#'     needed);
+#'   \item otherwise the current working directory ([getwd()]).
+#' }
+#' An existing literal path is used as-is; anything else is evaluated as R
+#' code (e.g. an object or call that returns a path). A resolved file is
+#' revealed inside its containing folder; a directory is opened directly.
+#'
+#' @export
+addin_open_in_explorer <- function() {
+  .need_rstudio()
+
+  ctx <- rstudioapi::getActiveDocumentContext()
+  sel <- ctx$selection[[1]]
+
+  text <- sel$text
+  if (!nzchar(trimws(text))) {
+    pos  <- sel$range$start
+    line <- ctx$contents[pos[["row"]]]
+    text <- .token_at_cursor(line, pos[["column"]])
+  }
+
+  path <- if (nzchar(trimws(text))) .resolve_path_text(text) else getwd()
+
+  .open_in_explorer(path)
+}
+
+#' RStudio addin: flip backslashes in selection
+#'
+#' Replaces all backslashes with forward slashes in the selected text.
+#' Requires a selection.
+#'
+#' @export
+addin_flip_backslash <- function() {
+  .need_rstudio()
+
+  ctx <- rstudioapi::getActiveDocumentContext()
+  sel <- ctx$selection[[1]]
+
+  if (!nzchar(sel$text))
+    cli::cli_abort("No text selected. Select the text to flip backslashes in.")
+
+  fixed <- gsub("\\\\", "/", sel$text)
+  rstudioapi::modifyRange(sel$range, fixed, ctx$id)
+}
+
+#' RStudio addin: fix Windows paths
+#'
+#' Replaces backslashes with forward slashes in Windows-style paths
+#' (`C:\...` or `\\server\...`). Operates on the selected text, or the
+#' entire active file if nothing is selected.
+#'
+#' @export
+addin_fix_path <- function() {
+  .need_rstudio()
+
+  ctx <- rstudioapi::getActiveDocumentContext()
+  sel <- ctx$selection[[1]]
+
+  if (nzchar(sel$text)) {
+    rstudioapi::modifyRange(sel$range, .fix_windows_paths(sel$text), ctx$id)
+  } else {
+    cursor_pos <- ctx$selection[[1]]$range$start
+    text  <- paste(ctx$contents, collapse = "\n")
+    fixed <- .fix_windows_paths(text)
+    rstudioapi::setDocumentContents(fixed, ctx$id)
+    rstudioapi::setCursorPosition(cursor_pos, ctx$id)
+  }
+}
