@@ -211,6 +211,25 @@ addin_open_in_explorer <- function() {
   .open_in_explorer(path)
 }
 
+#' RStudio addin: map a folder
+#'
+#' Opens [map_folder()] for the selected path if it is a folder, otherwise
+#' for the active RStudio project, otherwise for the working directory.
+#'
+#' @export
+addin_map_folder <- function() {
+  .need_rstudio()
+
+  text <- trimws(rstudioapi::getActiveDocumentContext()$selection[[1]]$text)
+  path <- if (nzchar(text)) {
+    tryCatch(.resolve_path_text(text), error = function(e) NULL)
+  }
+  if (is.null(path) || !dir.exists(path)) {
+    path <- rstudioapi::getActiveProject() %||% getwd()
+  }
+  map_folder(path)
+}
+
 #' RStudio addin: flip backslashes in selection
 #'
 #' Replaces all backslashes with forward slashes in the selected text.

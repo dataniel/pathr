@@ -11,8 +11,10 @@
 #'   reads them
 #' * **See a whole folder at once:** [map_folder()], an interactive map of
 #'   a project folder where you tag what matters, write notes and draw your
-#'   own relations between folders and files; [folder_notes()] reads them
-#'   back into R
+#'   own relations between folders and files -- it suggests the ones it can
+#'   read out of your scripts; [folder_notes()] reads it all back into R,
+#'   [folder_guide()] writes it up, and [addin_map_folder()] opens the map
+#'   for the project
 #' * **See a path on disk:** [open_in_explorer()] from the console, and
 #'   [addin_open_in_explorer()] from wherever the cursor is
 #' * **Turn pasted Windows paths into valid R:** [addin_paste_path()],

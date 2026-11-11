@@ -2,10 +2,12 @@
 
 export(addin_fix_path)
 export(addin_flip_backslash)
+export(addin_map_folder)
 export(addin_open_in_explorer)
 export(addin_paste_path)
 export(addin_text_to_vector)
 export(browse_files)
+export(folder_guide)
 export(folder_ignore)
 export(folder_notes)
 export(map_folder)

@@ -50,6 +50,78 @@ test_that("a folder that does not exist is an error", {
   expect_error(map_folder("does/not/exist"), "does not exist")
 })
 
+test_that("gitignore = TRUE skips what git ignores", {
+  skip_if(Sys.which("git") == "", "git is not installed")
+  d <- make_folder()
+  writeLines(c("data/raw/", "*.log"), file.path(d, ".gitignore"))
+  writeLines("x", file.path(d, "run.log"))
+  system2("git", c("-C", shQuote(d), "init", "-q"), stdout = FALSE,
+          stderr = FALSE)
+  plain <- scan_folder(d)$path
+  expect_true(all(c("data/raw", "run.log") %in% plain))
+  s <- scan_folder(d, gitignore = TRUE)$path
+  expect_false(any(c("data/raw", "data/raw/a.csv", "run.log") %in% s))
+  # data/ holds nothing but ignored files, yet is not itself ignored
+  expect_true(all(c("data", "analysis.R", ".gitignore") %in% s))
+})
+
+test_that("gitignore = TRUE outside a repository warns and scans anyway", {
+  skip_if(Sys.which("git") == "", "git is not installed")
+  d <- make_folder()
+  expect_warning(s <- scan_folder(d, gitignore = TRUE), "had no effect")
+  expect_true("analysis.R" %in% s$path)
+})
+
+# suggested relations -------------------------------------------------------
+
+test_that("paths used in scripts become suggested relations", {
+  d <- make_folder()
+  dir.create(file.path(d, "R"))
+  dir.create(file.path(d, "output"))
+  writeLines("x", file.path(d, "output", "result.csv"))
+  writeLines("x", file.path(d, "output", "plot.png"))
+  writeLines("f <- function() 1", file.path(d, "R", "helpers.R"))
+  writeLines(c(
+    'source("R/helpers.R")',
+    'raw <- readr::read_csv("data/raw/a.csv")',
+    "write.csv(raw, file.path('output', 'result.csv'))",
+    'ggplot2::ggsave(here::here("output", "plot.png"), width = 5)',
+    'both <- lapply(c("data\\\\raw\\\\a.csv"), read.csv)',
+    'label <- "analysis"; missing <- read.csv("data/not-there.csv")',
+    'dir <- "data/raw"'
+  ), file.path(d, "analysis.R"))
+  writeLines('x <- readLines("../analysis.R")', file.path(d, "R", "peek.R"))
+
+  found <- pathr:::.fm_detect(d, scan_folder(d))
+  rel <- paste(found$from, found$label, found$to)
+  expect_setequal(rel, c(
+    "R/helpers.R sourced by analysis.R",
+    "data/raw/a.csv input to analysis.R",
+    "analysis.R writes output/result.csv",
+    "analysis.R writes output/plot.png",
+    "data/raw used by analysis.R",
+    "analysis.R input to R/peek.R"
+  ))
+})
+
+test_that("the call a path belongs to is the innermost one that is not a wrapper", {
+  call <- pathr:::.fm_open_call
+  expect_equal(call('x <- readr::read_csv('), "readr::read_csv")
+  expect_equal(call('write_csv(clean(x), '), "write_csv")
+  expect_equal(call('lapply(c('), "lapply")
+  expect_equal(call('p <- '), "")
+})
+
+test_that("detected relations reach the page, and detect = FALSE leaves them out", {
+  skip_if_not_installed("jsonlite")
+  d <- make_folder()
+  writeLines('x <- read.csv("data/raw/a.csv")', file.path(d, "analysis.R"))
+  expect_true(grepl('"detected":[["data/raw/a.csv","analysis.R","input to"]]',
+                    static_map(d), fixed = TRUE))
+  expect_true(grepl('"detected":null', static_map(d, detect = FALSE),
+                    fixed = TRUE))
+})
+
 # map_folder ----------------------------------------------------------------
 
 test_that("missing sizes do not break the summary", {
@@ -136,6 +208,36 @@ test_that("a broken notes file is an error naming the file", {
   d <- make_folder()
   writeLines("not json", file.path(d, ".foldermap.json"))
   expect_error(folder_notes(d), "Could not read")
+})
+
+# folder_guide --------------------------------------------------------------
+
+test_that("folder_guide writes tags, notes and relations as Markdown", {
+  skip_if_not_installed("jsonlite")
+  d <- make_folder()
+  writeLines('{"nodes":{"project/data":{"tag":"core","note":"all input\\nlives here"},
+      "project/analysis.R":{"note":"run this first"},"project/empty":{"tag":"outdated"}},
+    "relations":[{"id":"a","from":"project/data/raw/a.csv","to":"project/analysis.R","label":"input to","note":"monthly"},
+                 {"id":"b","from":"project/analysis.R","to":"project/gone.csv","label":""}]}',
+             file.path(d, ".foldermap.json"))
+  out <- tempfile(fileext = ".md")
+  md <- suppressMessages(folder_guide(d, file = out))
+  expect_equal(readLines(out), md)
+  expect_equal(md[[1]], "# Guide to project")
+  expect_true(all(c(
+    "## Core", "- `data`: all input lives here",
+    "## Outdated", "- `empty`",
+    "## Other notes", "- `analysis.R`: run this first",
+    "## Relations", "- `data/raw/a.csv` input to `analysis.R`: monthly",
+    "- `analysis.R` related to `gone.csv` (one end no longer exists)"
+  ) %in% md))
+  expect_false("## Important" %in% md)
+  expect_output(folder_guide(d), "## Core")
+})
+
+test_that("folder_guide says so when there is nothing to write", {
+  skip_if_not_installed("jsonlite")
+  expect_output(folder_guide(make_folder()), "Nothing is tagged")
 })
 
 # the view ------------------------------------------------------------------

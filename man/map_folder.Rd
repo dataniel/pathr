@@ -11,7 +11,9 @@ map_folder(
   show_files = TRUE,
   server = requireNamespace("httpuv", quietly = TRUE),
   open = interactive(),
-  file = NULL
+  file = NULL,
+  gitignore = FALSE,
+  detect = TRUE
 )
 }
 \arguments{
@@ -33,6 +35,11 @@ Needs \pkg{httpuv}.}
 
 \item{file}{Without a server only: where the HTML file is written.
 Defaults to a temporary file.}
+
+\item{gitignore}{Also skip what git ignores? See \code{\link[=scan_folder]{scan_folder()}}.}
+
+\item{detect}{Read the scripts in the folder and suggest relations from
+the paths they use? See the section on suggestions.}
 }
 \value{
 Invisibly, the address (with a server) or the path to the HTML
@@ -52,6 +59,24 @@ Double-click a folder to unfold it. Select a node to see its size, file
 types, and largest and most recently changed files, and to give it a tag,
 a note or a relation to another node.
 }
+\section{Relations the map suggests}{
+
+Drawing every relation by hand is the slow part, so the map proposes
+some. With \code{detect = TRUE} the R, R Markdown and Quarto scripts in the
+folder are read for quoted paths that point at something else in the
+folder, and the call around the path decides the label: a file handed to
+\code{read_csv()} or \code{readRDS()} is "input to" the script, one handed to
+\code{write_csv()} or \code{ggsave()} is one the script "writes", and a \code{source()}d
+file is "sourced by" it. Files with the same name and size are proposed
+as "copy of" each other.
+
+These are suggestions only. They are drawn dotted, listed in the panel,
+and become relations when you add them; a dismissed suggestion is
+remembered in the notes file and not proposed again. The scripts are read
+as text, never run, so a path built at run time (\code{paste0(dir, name)}) is
+not found. \code{file.path()} and \code{here()} calls made of plain strings are.
+}
+
 \section{Where the notes are kept}{
 
 In \code{.foldermap.json} inside the scanned folder. That is deliberate, rather
@@ -91,6 +116,7 @@ map_folder(".", server = FALSE, file = "folder-map.html")
 }
 }
 \seealso{
-\code{\link[=folder_notes]{folder_notes()}} reads the notes back into R; \code{\link[=scan_folder]{scan_folder()}}
-gives the file listing the map is built from.
+\code{\link[=folder_notes]{folder_notes()}} reads the notes back into R and
+\code{\link[=folder_guide]{folder_guide()}} writes them up; \code{\link[=scan_folder]{scan_folder()}} gives the file listing
+the map is built from.
 }

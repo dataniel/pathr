@@ -4,7 +4,12 @@
 \alias{scan_folder}
 \title{Scan a folder}
 \usage{
-scan_folder(path = ".", ignore = folder_ignore(), max_depth = 60)
+scan_folder(
+  path = ".",
+  ignore = folder_ignore(),
+  max_depth = 60,
+  gitignore = FALSE
+)
 }
 \arguments{
 \item{path}{The folder to scan.}
@@ -13,6 +18,11 @@ scan_folder(path = ".", ignore = folder_ignore(), max_depth = 60)
 
 \item{max_depth}{How deep to go at most. Guards against loops through
 junctions on Windows.}
+
+\item{gitignore}{Also skip what git ignores in this folder? The question
+is put to git itself, so nested \code{.gitignore} files, negations and your
+global excludes all count. Off by default: the data and output folders
+a project keeps out of git are often exactly what you want on the map.}
 }
 \value{
 A data frame with the columns \code{path} (relative, with \code{/}), \code{size}

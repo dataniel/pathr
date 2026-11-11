@@ -31,6 +31,17 @@ main{flex:1;display:flex;min-height:0}
 #graphwrap{flex:1;position:relative;min-width:0}
 #graph{position:absolute;inset:0}
 #graph.connect{cursor:crosshair}
+#treemap{position:absolute;inset:0;background:var(--bg);overflow:hidden;font-size:11px;line-height:14px}
+#treemap .bar{position:absolute;left:0;top:0;right:0;height:26px;padding:5px 10px;font-size:12.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#treemap .bar span{cursor:pointer}
+#treemap .bar span:hover{color:var(--accent)}
+.tm{position:absolute;overflow:hidden;cursor:pointer;border:1px solid var(--bg);border-radius:2px;color:#fff;padding:0 3px;white-space:nowrap}
+.tm.d{background:var(--panel);color:var(--text);border-width:1.5px}
+.tm.d.leaf{color:#fff}
+.tm.sel{outline:2px solid var(--text);outline-offset:-2px;z-index:1}
+.tm:hover{filter:brightness(1.12)}
+.rel.sug{cursor:default;border-style:dashed}
+.rel.sug button{padding:0 7px;font-size:11.5px;margin-left:4px;float:right}
 #status{position:absolute;left:12px;bottom:10px;color:var(--muted);font-size:12px;pointer-events:none}
 #banner{position:absolute;left:50%;top:12px;transform:translateX(-50%);background:var(--rel);color:#fff;padding:6px 14px;border-radius:20px;font-size:13px;display:none;z-index:5}
 #toast{position:absolute;right:12px;bottom:10px;background:var(--text);color:var(--bg);padding:6px 12px;border-radius:8px;font-size:13px;opacity:0;transition:opacity .2s;pointer-events:none}
@@ -87,9 +98,10 @@ kbd{background:var(--chip);border:1px solid var(--line);border-radius:4px;paddin
   <div class="searchwrap"><input type="search" id="search" placeholder="Search name or note  ( / )" disabled><div id="results"></div></div>
   <span class="sep"></span>
   <label>Size <select id="sizeBy"><option value="size">bytes</option><option value="files">number of files</option></select></label>
-  <label>Color <select id="colorBy"><option value="depth">depth</option><option value="cat">file type</option></select></label>
-  <label>Layout <select id="layout"><option value="force">force</option><option value="hier">tree</option></select></label>
+  <label>Color <select id="colorBy"><option value="depth">depth</option><option value="cat">file type</option><option value="age">age</option></select></label>
+  <label>Layout <select id="layout"><option value="force">force</option><option value="hier">tree</option><option value="treemap">treemap</option></select></label>
   <label><input type="checkbox" id="showFiles"> show files</label>
+  <label title="Show only what is tagged, noted or related, and the folders leading there"><input type="checkbox" id="onlyTagged"> tagged only</label>
   <span class="sep"></span>
   <button id="collapse" title="Collapse everything to the root folder">Collapse</button>
   <button id="fit" title="Fit the map to the window">Fit</button>
@@ -101,6 +113,7 @@ kbd{background:var(--chip);border:1px solid var(--line);border-radius:4px;paddin
 <main>
   <div id="graphwrap">
     <div id="graph"></div>
+    <div id="treemap" hidden></div>
     <div id="empty"><div class="card">
       <h2>Get an overview of a project folder</h2>
       <p>Choose a folder. It is shown as a network you can unfold and collapse. You can tag the folders that matter, write notes and draw your own relations between folders and files.</p>
@@ -151,13 +164,17 @@ const OLD_TAGS = {kerne:'core', vigtig:'important', uklar:'unclear', gammel:'out
 const REL_COLORS = ['#e8590c','#d6336c','#7048e8','#1c7ed6','#2b8a3e','#495057'];
 const REL_PRESETS = ['depends on','input to','output from','documents','copy of','replaces','related to','read first'];
 const FILE_LIMIT = 40;
+// Color by age: days since last change -> label and color, newest first
+const NOW = Date.now();
+const AGES = [[30, 'under a month', '#e03131'], [182, 'under 6 months', '#f08c00'], [365, 'under a year', '#d9b100'], [1095, 'under 3 years', '#3c94a6'], [Infinity, 'older', '#8a93a6']];
+const ageOf = n => n.mtime ? AGES.find(a => (NOW - n.mtime) / 864e5 < a[0]) : null;
 const DEFAULT_IGNORE = 'node_modules, .git, .svn, __pycache__, .Rproj.user, .venv, venv, .ipynb_checkpoints, .DS_Store, Thumbs.db, desktop.ini, .quarto, *_cache';
 
 // ---------- state ----------
 let root = null, lastHandle = null;
 const byPath = new Map();
 let expanded = new Set(), visibleSet = new Set();
-let ann = {nodes:{}, relations:[], basePath:''};
+let ann = {nodes:{}, relations:[], dismissed:[], basePath:''};
 let storeKey = null, viewKey = null, network = null, nodesDS = null, edgesDS = null;
 let selected = null, connectFrom = null, view = 'overview';
 // What was last sent to the graph, so render() only updates what has changed
@@ -165,7 +182,7 @@ const sigN = new Map(), sigE = new Map();
 let posStore = {};   // path -> [x, y]: where the nodes sit, so the map looks the same next time
 let dirty = false;   // are there unsaved changes to notes or relations?
 const fileLimit = {};
-const settings = {sizeBy:'size', colorBy:'depth', layout:'force', showFiles:true};
+const settings = {sizeBy:'size', colorBy:'depth', layout:'force', showFiles:true, onlyTagged:false};
 let allFilesFor = null;
 
 const lsGet = k => { try { return localStorage.getItem(k); } catch { return null; } };
@@ -238,6 +255,7 @@ function cleanAnn(d) {
     });
   }
   return {nodes, relations, basePath: typeof d.basePath === 'string' ? d.basePath : '',
+    dismissed: Array.isArray(d.dismissed) ? d.dismissed.filter(k => typeof k === 'string') : [],
     expanded: Array.isArray(d.expanded) ? d.expanded.filter(p => typeof p === 'string') : []};
 }
 
@@ -351,6 +369,7 @@ function start() {
     raw.basePath = EMBED.basePath;
   } else raw = lsAnn();
   ann = cleanAnn(raw);
+  buildSuggestions();
   dirty = false;
 
   // The view (unfolded, positions) is fetched once per folder. On ↻ the one on screen is kept.
@@ -383,6 +402,11 @@ function start() {
 // ---------- graph ----------
 function visibleList() {
   const out = [];
+  if (settings.onlyTagged) {
+    const keep = keepSet();
+    (function rec(n) { out.push(n); for (const c of n.children) if (keep.has(c.path)) rec(c); })(root);
+    return out;
+  }
   (function rec(n) {
     out.push(n);
     if (!n.dir || !expanded.has(n.path)) return;
@@ -397,6 +421,15 @@ function visibleList() {
   return out;
 }
 
+// What "tagged only" shows: everything tagged, noted or related, and the folders leading there
+function keepSet() {
+  const keep = new Set([root.path]);
+  const add = p => { for (let n = byPath.get(p); n && !keep.has(n.path); n = n.parent) keep.add(n.path); };
+  for (const [p, a] of Object.entries(ann.nodes)) if (a.tag || a.note) add(p);
+  for (const r of ann.relations) { add(r.from); add(r.to); }
+  return keep;
+}
+
 function tooltip(n) {
   const lines = [n.name];
   if (n.dir) lines.push(`${fmtB(n.size)} · ${fmtN(n.files)} files · ${fmtN(n.dirs)} folders`, `Last changed: ${fmtD(n.mtime)}`);
@@ -407,6 +440,7 @@ function tooltip(n) {
 }
 
 function baseColor(n) {
+  if (settings.colorBy === 'age') return ageOf(n)?.[2] || '#c9ced6';
   if (settings.colorBy === 'cat') return CATS[n.cat]?.color || CATS.other.color;
   return n.dir ? DEPTH[n.depth % DEPTH.length] : CATS[n.cat]?.color || CATS.other.color;
 }
@@ -487,9 +521,10 @@ function render() {
   });
   visibleSet = new Set(parentOf.keys());
   const edges = list.filter(n => n.parent).map(n => ({id:'t:' + n.path, from:n.parent.path, to:n.path, color:{color:T.edge, opacity:.9}, width:1}));
-  edges.push(...relEdges());
+  edges.push(...relEdges(), ...sugEdges());
   syncDS(edgesDS, sigE, edges);
-  $('#status').textContent = `${fmtN(list.length)} visible nodes · ${fmtN(ann.relations.length)} relations` + (list.length > 1500 ? ' · many nodes, consider collapsing some' : '');
+  $('#status').textContent = `${fmtN(list.length)} visible nodes · ${fmtN(ann.relations.length)} relations` + (list.length > 1500 ? ' · many nodes, consider collapsing some' : '') + (settings.onlyTagged ? ' · tagged only' : '');
+  syncTreemap();
 }
 
 function refreshNode(path) {
@@ -532,6 +567,8 @@ function createNetwork() {
       if (id.startsWith('more:')) { const pp = id.slice(5); fileLimit[pp] = (fileLimit[pp] || FILE_LIMIT) + 100; render(); return; }
       if (connectFrom) { if (connectFrom !== id) addRelation(connectFrom, id); return; }
       select(id);
+    } else if (p.edges.some(e => e.startsWith('s:'))) {
+      showSuggestion(p.edges.find(e => e.startsWith('s:')).slice(2));
     } else if (p.edges.length && p.edges[0].startsWith('r:')) {
       showRelation(p.edges[0].slice(2));
     } else {
@@ -559,6 +596,7 @@ function reveal(path) {
   const n = byPath.get(path);
   if (!n) { toast('No longer exists: ' + path); return; }
   for (let p = n.parent; p; p = p.parent) expanded.add(p.path);
+  if (tmRoot && path !== tmRoot && !path.startsWith(tmRoot + '/')) tmRoot = root.path;
   if (!n.dir && !settings.showFiles) { settings.showFiles = true; $('#showFiles').checked = true; }
   if (!n.dir) { const idx = n.parent.children.filter(c => !c.dir).indexOf(n); if (idx >= (fileLimit[n.parent.path] || FILE_LIMIT)) fileLimit[n.parent.path] = idx + 10; }
   render(); saveView();
@@ -570,6 +608,7 @@ function select(path) {
   selected = path;
   if (path && visibleSet.has(path)) network.selectNodes([path]); else network.unselectAll();
   path ? showNode(path) : showOverview();
+  if (settings.layout === 'treemap') drawTreemap();
 }
 
 // ---------- relations ----------
@@ -588,11 +627,153 @@ function addRelation(from, to) {
   showRelation(r.id, true);
 }
 
+// ---------- suggested relations ----------
+// Relations the map proposes: paths the scripts use (found by R, see .fm_detect)
+// and files with the same name and size. Nothing is added until the user says so.
+let suggestions = [];
+const SUG_WHY = {code:'found in the code', dup:'same name and size'};
+const relPath = p => p.split('/').slice(1).join('/');
+function buildSuggestions() {
+  const have = new Set(ann.relations.map(r => r.from + '\n' + r.to));
+  const dismissed = new Set(ann.dismissed), seen = new Set(), out = [];
+  const add = (from, to, label, why) => {
+    // The key leaves the root folder's name out, so it survives a rename
+    const key = relPath(from) + '|' + relPath(to) + '|' + label;
+    if (from === to || !byPath.has(from) || !byPath.has(to) || have.has(from + '\n' + to) || dismissed.has(key) || seen.has(key)) return;
+    seen.add(key); out.push({key, from, to, label, why});
+  };
+  const full = p => p ? root.name + '/' + p : root.name;
+  for (const d of EMBED?.detected || []) add(full(d[0]), full(d[1]), d[2], 'code');
+  // Small files (.gitkeep, empty configs) are alike everywhere without being copies
+  const groups = new Map();
+  for (const n of byPath.values()) {
+    if (n.dir || n.size < 1024) continue;
+    const k = n.name.toLowerCase() + '\n' + n.size;
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(n);
+  }
+  for (const g of groups.values()) {
+    if (g.length < 2 || g.length > 4) continue;
+    g.sort((a, b) => a.mtime - b.mtime);  // the oldest is taken to be the original
+    for (const n of g.slice(1)) add(n.path, g[0].path, 'copy of', 'dup');
+  }
+  suggestions = out.slice(0, 300);
+}
+function sugEdges() {
+  const out = [];
+  for (const s of suggestions.slice(0, 80)) {
+    const a = rep(s.from), b = rep(s.to);
+    if (!a || !b || a === b) continue;
+    out.push({id:'s:' + s.key, from:a.path, to:b.path, arrows:{to:{enabled:true, scaleFactor:.5}}, dashes:[2, 6], width:1, physics:false,
+      smooth:{enabled:true, type:'curvedCCW', roundness:.3}, color:{color:T.muted, highlight:T.rel, hover:T.rel, opacity:.7},
+      title: `Suggested: ${byPath.get(s.from).name} → ${s.label} → ${byPath.get(s.to).name}\n(${SUG_WHY[s.why]} · click to add or dismiss)`});
+  }
+  return out;
+}
+function acceptSug(keys) {
+  const ks = new Set(keys);
+  for (const s of suggestions) if (ks.has(s.key)) ann.relations.push({id:newId(), from:s.from, to:s.to, label:s.label, color:REL_COLORS[s.why === 'code' ? 3 : 5], note:''});
+  save(); buildSuggestions(); render(); showOverview();
+}
+function sugHTML(s) {
+  const a = byPath.get(s.from), b = byPath.get(s.to), k = esc(s.key);
+  return `<div class="rel sug" title="${esc(relPath(s.from))} → ${esc(relPath(s.to))}"><button data-act="dropSug" data-k="${k}" title="Dismiss: do not suggest this again">✕</button><button data-act="addSug" data-k="${k}">Add</button>${goLink(a)} <em>→ ${esc(s.label)} →</em> ${goLink(b)}<div class="muted" style="font-size:11.5px">${SUG_WHY[s.why]}</div></div>`;
+}
+function sugSection() {
+  if (!suggestions.length) return '';
+  const nCode = suggestions.filter(s => s.why === 'code').length;
+  return `<h3>Suggested relations (${suggestions.length})</h3>
+    ${nCode > 1 ? `<div class="row" style="margin:0 0 6px"><button data-act="addAllSug">Add all ${nCode} found in the code</button></div>` : ''}
+    ${suggestions.slice(0, 25).map(sugHTML).join('')}
+    ${suggestions.length > 25 ? `<p class="muted">… and ${suggestions.length - 25} more. Add or dismiss some to see the rest.</p>` : ''}`;
+}
+function showSuggestion(key) {
+  const s = suggestions.find(x => x.key === key);
+  if (!s) return showOverview();
+  view = 'sug'; showNode.last = null;
+  $('#panel').innerHTML = `
+    <div class="row" style="margin:0 0 10px"><button data-act="back">← Overview</button></div>
+    <h2>Suggested relation</h2>
+    <div class="path">${goLink(byPath.get(s.from))} → ${esc(s.label)} → ${goLink(byPath.get(s.to))}</div>
+    <p class="muted">Suggested because: ${SUG_WHY[s.why]}. It is not saved until you add it.</p>
+    <div class="row"><button class="primary" data-act="addSug" data-k="${esc(s.key)}">Add relation</button><button data-act="dropSug" data-k="${esc(s.key)}">Dismiss</button></div>`;
+}
+
+// ---------- treemap ----------
+// The same folder as nested rectangles, sized like the nodes. A graph shows
+// how things hang together; this shows what takes up the room.
+let tmRoot = null;
+function squarify(items, x, y, w, h) {
+  const out = [], total = items.reduce((s, i) => s + i.v, 0);
+  if (!total || w <= 0 || h <= 0) return out;
+  const scale = w * h / total;
+  for (const it of items) it.a = it.v * scale;
+  const worst = (sum, min, max, side) => Math.max(side * side * max / (sum * sum), sum * sum / (side * side * min));
+  let row = [], sum = 0;
+  const place = () => {
+    const thick = sum / Math.min(w, h);
+    let off = 0;
+    for (const it of row) {
+      const len = it.a / thick;
+      out.push(w >= h ? {n:it.n, x, y:y + off, w:thick, h:len} : {n:it.n, x:x + off, y, w:len, h:thick});
+      off += len;
+    }
+    if (w >= h) { x += thick; w -= thick; } else { y += thick; h -= thick; }
+    row = []; sum = 0;
+  };
+  for (const it of items) {
+    const side = Math.min(w, h);
+    if (row.length && worst(sum + it.a, Math.min(row.at(-1).a, it.a), row[0].a, side) > worst(sum, row.at(-1).a, row[0].a, side)) place();
+    row.push(it); sum += it.a;
+  }
+  if (row.length) place();
+  return out;
+}
+function drawTreemap() {
+  const el = $('#treemap');
+  const top = byPath.get(tmRoot) || root;
+  tmRoot = top.path;
+  const val = n => settings.sizeBy === 'files' ? n.files : n.size;
+  const html = [], crumbs = [];
+  for (let p = top; p; p = p.parent) crumbs.unshift(`<span data-zoom="${esc(p.path)}">${esc(p.name)}</span>`);
+  html.push(`<div class="bar">${crumbs.join(' / ')} · ${fmtB(top.size)} · click to select, double-click a folder to zoom in</div>`);
+  (function cell(n, x, y, w, h, depth) {
+    if (w < 3 || h < 3) return;
+    const a = ann.nodes[n.path] || {}, tag = TAGS[a.tag], col = baseColor(n);
+    const kids = n.dir ? n.children.filter(c => val(c) > 0).sort((p, q) => val(q) - val(p)).slice(0, 150) : [];
+    const open = kids.length && depth < 5 && w > 46 && h > 34;
+    const label = (tag ? tag.sym + ' ' : '') + n.name + (a.note ? ' ✎' : '');
+    const look = n.dir && open ? `border-color:${tag ? tag.color : col}` : `background:${col}` + (tag ? `;border-color:${tag.color};border-width:2px` : '');
+    html.push(`<div class="tm ${n.dir ? 'd' : 'f'}${open ? '' : ' leaf'}${selected === n.path ? ' sel' : ''}" data-p="${esc(n.path)}" title="${esc(tooltip(n))}" style="left:${x.toFixed(1)}px;top:${y.toFixed(1)}px;width:${w.toFixed(1)}px;height:${h.toFixed(1)}px;${look}${tag?.dim ? ';opacity:.4' : ''}">${w > 30 && h > 13 ? esc(label) : ''}</div>`);
+    if (!open) return;
+    for (const r of squarify(kids.map(c => ({n:c, v:val(c)})), x + 2, y + 16, w - 4, h - 18)) cell(r.n, r.x, r.y, r.w, r.h, depth + 1);
+  })(top, 0, 26, el.clientWidth, el.clientHeight - 26, 0);
+  el.innerHTML = html.join('');
+}
+function syncTreemap() {
+  const on = settings.layout === 'treemap';
+  $('#treemap').hidden = !on;
+  $('#status').hidden = on;
+  if (on && root) drawTreemap();
+}
+$('#treemap').addEventListener('click', e => {
+  const z = e.target.closest('[data-zoom]'), c = e.target.closest('[data-p]');
+  if (z) { tmRoot = z.dataset.zoom; drawTreemap(); }
+  else if (c && connectFrom) { if (connectFrom !== c.dataset.p) addRelation(connectFrom, c.dataset.p); }
+  else if (c) select(c.dataset.p);
+});
+$('#treemap').addEventListener('dblclick', e => {
+  const c = e.target.closest('[data-p]'), n = c && byPath.get(c.dataset.p);
+  if (n?.dir && n.children.length) { tmRoot = n.path; drawTreemap(); }
+});
+addEventListener('resize', () => { if (root && settings.layout === 'treemap') drawTreemap(); });
+
 // ---------- save / load ----------
 // Notes and relations: what should follow the folder. Sorted, so the file changes as little as possible in git.
 function annData() {
   for (const k in ann.nodes) { const a = ann.nodes[k]; if (!a.tag && !a.note) delete ann.nodes[k]; }
-  return {nodes:Object.fromEntries(Object.entries(ann.nodes).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)), relations:ann.relations};
+  return {nodes:Object.fromEntries(Object.entries(ann.nodes).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)), relations:ann.relations,
+    ...(ann.dismissed.length ? {dismissed:[...ann.dismissed].sort()} : {})};
 }
 function setSaved(s) {
   const el = $('#saved'), srv = !!EMBED?.saveUrl;
@@ -650,6 +831,7 @@ function setTag(path, tag) {
   const a = ann.nodes[path] || (ann.nodes[path] = {});
   a.tag = a.tag === tag ? undefined : tag;
   save(); refreshNode(path); showNode(path);
+  if (settings.onlyTagged) render(); else if (settings.layout === 'treemap') drawTreemap();
 }
 function exportJSON() {
   if (!root) return;
@@ -665,8 +847,9 @@ async function importJSON(file) {
     const ids = new Set(ann.relations.map(r => r.id));
     for (const r of d.relations) if (!ids.has(r.id)) ann.relations.push(r);
     if (d.basePath && !ann.basePath) ann.basePath = d.basePath;
+    for (const k of d.dismissed) if (!ann.dismissed.includes(k)) ann.dismissed.push(k);
     for (const p of d.expanded) if (byPath.get(p)?.dir) expanded.add(p);
-    save(); saveView(); render(); selected ? showNode(selected) : showOverview();
+    save(); saveView(); buildSuggestions(); render(); selected ? showNode(selected) : showOverview();
     toast('Notes and relations loaded');
   } catch (e) { toast('Could not read the file: ' + e.message, 4000); }
 }
@@ -683,6 +866,9 @@ async function copy(text) {
   catch { const t = document.createElement('textarea'); t.value = text; document.body.append(t); t.select(); document.execCommand('copy'); t.remove(); }
   toast('Copied: ' + text);
 }
+
+// The same path as an R string: forward slashes, quoted, ready to paste into a script
+const rPath = path => '"' + diskPath(path).replace(/\\/g, '/') + '"';
 
 // ---------- panel ----------
 function* filesUnder(n) { for (const c of n.children) { if (c.dir) yield* filesUnder(c); else yield c; } }
@@ -706,6 +892,7 @@ function typeBars(n, k = 7) {
   return rows.map(([e, v]) => `<div class="bar"><span>.${esc(e)} <span class="muted">${fmtN(v.n)}</span></span><span class="t"><i style="width:${Math.max(2, v.b / tot * 100)}%;background:${CATS[catOf(e)].color}"></i></span><span class="v">${fmtB(v.b)}</span></div>`).join('');
 }
 function legend() {
+  if (settings.colorBy === 'age') return AGES.map(a => `<span><i style="background:${a[2]}"></i>${a[1]}</span>`).join('') + '<span class="muted">(last changed; a folder is as new as its newest file)</span>';
   if (settings.colorBy === 'cat') return Object.values(CATS).map(c => `<span><i style="background:${c.color}"></i>${c.label}</span>`).join('');
   return DEPTH.slice(0, 6).map((c, i) => `<span><i style="background:${c}"></i>level ${i}</span>`).join('') + '<span class="muted">(files are colored by type)</span>';
 }
@@ -727,6 +914,7 @@ function showOverview() {
       : '<p class="muted">Nothing tagged yet. Select a node and give it a tag, such as ★ Core.</p>'}
     <h3>Relations (${ann.relations.length})</h3>
     ${ann.relations.length ? ann.relations.map(relHTML).join('') : '<p class="muted">Select a node and press “Connect to…” (or the <kbd>R</kbd> key), then click the target.</p>'}
+    ${sugSection()}
     <h3>Largest folders</h3><div class="list">${biggest.map(n => `<div>${goLink(n)}<span>${fmtB(n.size)}</span></div>`).join('')}</div>
     <h3>Most recently changed files</h3><div class="list">${newest.map(n => `<div>${goLink(n)}<span>${fmtD(n.mtime)}</span></div>`).join('')}</div>
     <h3>File types</h3>${typeBars(root, 10)}
@@ -778,7 +966,7 @@ function showNode(path) {
     <div class="row">
       ${n.dir ? `<button data-act="toggle">${expanded.has(path) ? 'Collapse' : 'Unfold'}</button><button data-act="expandAll" title="Unfold all subfolders">Unfold everything below</button>` : ''}
       <button data-act="focus">Center</button>
-      <button data-act="copy" title="${esc(diskPath(path))}">Copy path</button>
+      <button data-act="copy" title="${esc(diskPath(path))}">Copy path</button><button data-act="copyR" title="${esc(rPath(path))}">Copy for R</button>
       ${EMBED?.openUrl ? `<button data-act="open" data-what="open" title="Open with the default program">Open</button><button data-act="open" data-what="explorer">Show in explorer</button>` : ''}
       <button data-act="connect" style="border-color:var(--rel)">Connect to…</button>
     </div>
@@ -841,6 +1029,10 @@ const actions = {
   },
   focus: () => visibleSet.has(selected) && network.focus(selected, {scale:1.1, animation:true}),
   copy: () => copy(diskPath(selected)),
+  copyR: () => copy(rPath(selected)),
+  addSug: t => acceptSug([t.dataset.k]),
+  addAllSug: () => acceptSug(suggestions.filter(s => s.why === 'code').map(s => s.key)),
+  dropSug: t => { ann.dismissed.push(t.dataset.k); save(); buildSuggestions(); render(); showOverview(); },
   connect: startConnect,
   allFiles: () => { allFilesFor = selected; showNode(selected); },
   open: t => {
@@ -855,8 +1047,8 @@ const actions = {
     const i = ann.relations.findIndex(x => x.id === $('#panel').dataset.rel);
     if (i < 0) return;
     const [r] = ann.relations.splice(i, 1);
-    save(); render(); selected && byPath.has(selected) ? showNode(selected) : showOverview();
-    toast('Relation deleted', 7000, {label:'Undo', fn: () => { ann.relations.splice(Math.min(i, ann.relations.length), 0, r); save(); render(); showRelation(r.id); }});
+    save(); buildSuggestions(); render(); selected && byPath.has(selected) ? showNode(selected) : showOverview();
+    toast('Relation deleted', 7000, {label:'Undo', fn: () => { ann.relations.splice(Math.min(i, ann.relations.length), 0, r); save(); buildSuggestions(); render(); showRelation(r.id); }});
   }
 };
 $('#panel').addEventListener('click', e => {
@@ -918,7 +1110,7 @@ $('#rescan').onclick = async () => {
   if (!await flushSave()) { toast('Could not save your latest changes, so the folder was not rescanned. Is the R session still running?', 6000); return; }
   if (lastHandle) await loadFromHandle(lastHandle);
   else if (EMBED?.saveUrl) {
-    try { const d = await (await fetch(EMBED.dataUrl)).json(); EMBED.entries = d.entries; EMBED.ann = d.ann; loadFromEmbed(EMBED); }
+    try { const d = await (await fetch(EMBED.dataUrl)).json(); EMBED.entries = d.entries; EMBED.ann = d.ann; EMBED.detected = d.detected; loadFromEmbed(EMBED); }
     catch { toast('Could not rescan. Is the R session still running?', 5000); return; }
   } else return;
   if (keepSel && byPath.has(keepSel)) select(keepSel);
@@ -937,6 +1129,14 @@ for (const id of ['sizeBy', 'colorBy', 'layout']) {
 }
 $('#showFiles').checked = settings.showFiles;
 $('#showFiles').onchange = e => { settings.showFiles = e.target.checked; persistSettings(); if (root) render(); };
+$('#onlyTagged').checked = settings.onlyTagged;
+$('#onlyTagged').onchange = e => {
+  settings.onlyTagged = e.target.checked; persistSettings();
+  if (!root) return;
+  render();
+  if (settings.onlyTagged && nodesDS.length < 2) toast('Nothing is tagged, noted or related yet', 4000);
+  setTimeout(() => network.fit({animation:true}), 400);
+};
 $('#collapse').onclick = () => { if (!root) return; expanded = new Set([root.path]); render(); saveView(); network.fit({animation:true}); };
 // From R the folder is already chosen. Another folder here would have its notes saved in the first folder's file.
 if (EMBED) $('#pick').hidden = true;

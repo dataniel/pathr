@@ -29,6 +29,7 @@ reference:
     contents:
       - map_folder
       - folder_notes
+      - folder_guide
       - scan_folder
       - folder_ignore
       - stop_folder_map
@@ -36,6 +37,7 @@ reference:
   - title: RStudio addins
     contents:
       - addin_open_in_explorer
+      - addin_map_folder
       - addin_paste_path
       - addin_fix_path
       - addin_flip_backslash

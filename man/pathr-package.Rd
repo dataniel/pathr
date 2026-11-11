@@ -19,8 +19,10 @@ file browser that hands the marked paths back to R -- or a call that
 reads them
 \item \strong{See a whole folder at once:} \code{\link[=map_folder]{map_folder()}}, an interactive map of
 a project folder where you tag what matters, write notes and draw your
-own relations between folders and files; \code{\link[=folder_notes]{folder_notes()}} reads them
-back into R
+own relations between folders and files -- it suggests the ones it can
+read out of your scripts; \code{\link[=folder_notes]{folder_notes()}} reads it all back into R,
+\code{\link[=folder_guide]{folder_guide()}} writes it up, and \code{\link[=addin_map_folder]{addin_map_folder()}} opens the map
+for the project
 \item \strong{See a path on disk:} \code{\link[=open_in_explorer]{open_in_explorer()}} from the console, and
 \code{\link[=addin_open_in_explorer]{addin_open_in_explorer()}} from wherever the cursor is
 \item \strong{Turn pasted Windows paths into valid R:} \code{\link[=addin_paste_path]{addin_paste_path()}},

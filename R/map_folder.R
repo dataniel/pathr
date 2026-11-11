@@ -48,17 +48,23 @@ folder_ignore <- function() {
 #' @param ignore Names to skip, see [folder_ignore()].
 #' @param max_depth How deep to go at most. Guards against loops through
 #'   junctions on Windows.
+#' @param gitignore Also skip what git ignores in this folder? The question
+#'   is put to git itself, so nested `.gitignore` files, negations and your
+#'   global excludes all count. Off by default: the data and output folders
+#'   a project keeps out of git are often exactly what you want on the map.
 #'
 #' @return A data frame with the columns `path` (relative, with `/`), `size`
 #'   (bytes, 0 for folders), `mtime` (POSIXct) and `dir` (logical).
 #' @export
 #' @examples
 #' scan_folder(R.home("doc"))
-scan_folder <- function(path = ".", ignore = folder_ignore(), max_depth = 60) {
+scan_folder <- function(path = ".", ignore = folder_ignore(), max_depth = 60,
+                        gitignore = FALSE) {
   if (!dir.exists(path)) {
     cli::cli_abort("The folder {.path {path}} does not exist.")
   }
   rx <- .fm_glob_regex(ignore)
+  skip <- if (isTRUE(gitignore)) .fm_git_ignored(path) else character()
   paths <- list(); sizes <- list(); times <- list(); is_dir <- list()
   i <- 0L
   stack <- ""
@@ -73,6 +79,8 @@ scan_folder <- function(path = ".", ignore = folder_ignore(), max_depth = 60) {
     names <- names[!grepl(rx, names, ignore.case = TRUE)]
     if (!length(names)) next
     rels <- if (nzchar(rel)) paste(rel, names, sep = "/") else names
+    rels <- rels[!rels %in% skip]
+    if (!length(rels)) next
     info <- file.info(file.path(path, rels), extra_cols = FALSE)
     dir <- info$isdir %in% TRUE
     i <- i + 1L
@@ -92,6 +100,35 @@ scan_folder <- function(path = ".", ignore = folder_ignore(), max_depth = 60) {
     dir = as.logical(unlist(is_dir)),
     stringsAsFactors = FALSE
   )
+}
+
+# Paths git ignores under `path`, relative to it. A wholly ignored folder
+# comes back as one entry, so the scan never has to walk into it.
+.fm_git_ignored <- function(path) {
+  out <- tryCatch(
+    suppressWarnings(system2(
+      "git",
+      c("-C", shQuote(normalizePath(path, winslash = "/")),
+        "-c", "core.quotepath=off", "ls-files", "--others", "--ignored",
+        "--exclude-standard", "--directory"),
+      stdout = TRUE, stderr = FALSE
+    )),
+    error = function(e) structure(character(), status = 1L)
+  )
+  if (!is.null(attr(out, "status"))) {
+    cli::cli_warn(c(
+      "{.code gitignore = TRUE} had no effect.",
+      i = "{.path {path}} is not inside a git repository, or git is not installed."
+    ))
+    return(character())
+  }
+  Encoding(out) <- "UTF-8"
+  # git also lists a folder when everything in it is ignored, alongside the
+  # ignored things themselves. The folder is not ignored, so it stays on the
+  # map; a folder that really is ignored is listed without its contents.
+  is_dir <- grepl("/$", out)
+  parent <- vapply(out, function(p) any(startsWith(out, p) & out != p), NA)
+  sub("/$", "", out[!(is_dir & parent)])
 }
 
 # Turn glob patterns ("*_cache") into one regular expression.
@@ -121,6 +158,22 @@ scan_folder <- function(path = ".", ignore = folder_ignore(), max_depth = 60) {
 #' Double-click a folder to unfold it. Select a node to see its size, file
 #' types, and largest and most recently changed files, and to give it a tag,
 #' a note or a relation to another node.
+#'
+#' @section Relations the map suggests:
+#' Drawing every relation by hand is the slow part, so the map proposes
+#' some. With `detect = TRUE` the R, R Markdown and Quarto scripts in the
+#' folder are read for quoted paths that point at something else in the
+#' folder, and the call around the path decides the label: a file handed to
+#' `read_csv()` or `readRDS()` is "input to" the script, one handed to
+#' `write_csv()` or `ggsave()` is one the script "writes", and a `source()`d
+#' file is "sourced by" it. Files with the same name and size are proposed
+#' as "copy of" each other.
+#'
+#' These are suggestions only. They are drawn dotted, listed in the panel,
+#' and become relations when you add them; a dismissed suggestion is
+#' remembered in the notes file and not proposed again. The scripts are read
+#' as text, never run, so a path built at run time (`paste0(dir, name)`) is
+#' not found. `file.path()` and `here()` calls made of plain strings are.
 #'
 #' @section Where the notes are kept:
 #' In `.foldermap.json` inside the scanned folder. That is deliberate, rather
@@ -160,11 +213,15 @@ scan_folder <- function(path = ".", ignore = folder_ignore(), max_depth = 60) {
 #' @param open Open the map in the browser?
 #' @param file Without a server only: where the HTML file is written.
 #'   Defaults to a temporary file.
+#' @param gitignore Also skip what git ignores? See [scan_folder()].
+#' @param detect Read the scripts in the folder and suggest relations from
+#'   the paths they use? See the section on suggestions.
 #'
 #' @return Invisibly, the address (with a server) or the path to the HTML
 #'   file.
-#' @seealso [folder_notes()] reads the notes back into R; [scan_folder()]
-#'   gives the file listing the map is built from.
+#' @seealso [folder_notes()] reads the notes back into R and
+#'   [folder_guide()] writes them up; [scan_folder()] gives the file listing
+#'   the map is built from.
 #' @export
 #' @examples
 #' \dontrun{
@@ -179,7 +236,9 @@ map_folder <- function(path = ".",
                        show_files = TRUE,
                        server = requireNamespace("httpuv", quietly = TRUE),
                        open = interactive(),
-                       file = NULL) {
+                       file = NULL,
+                       gitignore = FALSE,
+                       detect = TRUE) {
   if (!dir.exists(path)) {
     cli::cli_abort("The folder {.path {path}} does not exist.")
   }
@@ -194,12 +253,14 @@ map_folder <- function(path = ".",
 
   if (isTRUE(server)) {
     .fm_need("httpuv", "{.code server = TRUE}")
-    url <- .fm_start_server(path, ignore, notes, show_files)
+    url <- .fm_start_server(path, ignore, notes, show_files,
+                            gitignore = gitignore, detect = detect)
     if (open) utils::browseURL(url)
     return(invisible(url))
   }
 
-  d <- .fm_data(path, ignore, notes, show_files)
+  d <- .fm_data(path, ignore, notes, show_files,
+                gitignore = gitignore, detect = detect)
   file <- file %||% tempfile("folder-map-", fileext = ".html")
   writeLines(enc2utf8(.fm_html(d)), file, useBytes = TRUE)
   .fm_summarise(d)
@@ -223,9 +284,10 @@ map_folder <- function(path = ".",
 # The data object the page reads (EMBED in folder-map.html).
 .fm_data <- function(path, ignore, notes, show_files = TRUE,
                      save_url = NULL, data_url = NULL, open_url = NULL,
-                     view_url = NULL) {
-  scan <- scan_folder(path, ignore)
+                     view_url = NULL, gitignore = FALSE, detect = TRUE) {
+  scan <- scan_folder(path, ignore, gitignore = gitignore)
   list(
+    detected = if (isTRUE(detect)) .fm_detect(path, scan),
     root = basename(normalizePath(path, winslash = "/")),
     basePath = normalizePath(path, winslash = "\\"),
     entries = data.frame(
@@ -352,6 +414,202 @@ folder_notes <- function(path = ".",
   list(nodes = nodes, relations = relations)
 }
 
+#' Write the map's notes up as a guide to the folder
+#'
+#' Turns the tags, notes and relations from [map_folder()] into a short
+#' Markdown document: the tagged folders and files with their notes, then
+#' the relations. It is the map as something to read -- for a README, or for
+#' the colleague who takes the project over.
+#'
+#' @inheritParams map_folder
+#' @param file Where to write the guide. With `NULL`, the default, it is
+#'   printed instead.
+#'
+#' @return The Markdown lines, invisibly.
+#' @export
+#' @examples
+#' \dontrun{
+#' folder_guide("C:/projects/big-project")
+#' folder_guide("C:/projects/big-project", file = "FOLDERS.md")
+#' }
+folder_guide <- function(path = ".",
+                         notes = file.path(path, ".foldermap.json"),
+                         file = NULL) {
+  n <- folder_notes(path, notes)
+  name <- function(p) ifelse(nzchar(p), paste0("`", p, "`"), "The folder itself")
+  item <- function(p, note) {
+    paste0("- ", name(p), ifelse(is.na(note) | !nzchar(note), "",
+                                 paste0(": ", gsub("\\s*\n\\s*", " ", note))))
+  }
+  titles <- c(core = "Core", important = "Important", unclear = "Unclear",
+              outdated = "Outdated")
+
+  md <- c(paste("# Guide to", basename(normalizePath(path, winslash = "/"))), "")
+  for (tag in names(titles)) {
+    hit <- n$nodes[n$nodes$tag %in% tag, ]
+    if (nrow(hit)) md <- c(md, paste("##", titles[[tag]]), "",
+                           item(hit$path, hit$note), "")
+  }
+  rest <- n$nodes[is.na(n$nodes$tag) & !is.na(n$nodes$note), ]
+  if (nrow(rest)) md <- c(md, "## Other notes", "",
+                          item(rest$path, rest$note), "")
+  r <- n$relations
+  if (nrow(r)) {
+    label <- ifelse(is.na(r$label) | !nzchar(r$label), "related to", r$label)
+    gone <- ifelse(r$exists, "", " (one end no longer exists)")
+    end <- function(p) ifelse(nzchar(p), p, ".")
+    md <- c(md, "## Relations", "",
+            paste0(item(paste0(end(r$from), "` ", label, " `", end(r$to)),
+                        r$note), gone),
+            "")
+  }
+  if (!nrow(n$nodes) && !nrow(r)) {
+    md <- c(md, "Nothing is tagged, noted or related yet.", "")
+  }
+
+  if (is.null(file)) {
+    cat(md, sep = "\n")
+  } else {
+    writeLines(enc2utf8(md), file, useBytes = TRUE)
+    cli::cli_alert_success("The guide is written to {.path {file}}.")
+  }
+  invisible(md)
+}
+
+# ---- suggested relations ---------------------------------------------------
+
+# What a call does with the path it is given, judged by its name alone.
+.fm_reads <- "^(read|fread|load|import|open_dataset|scan$|excel_sheets|vroom)"
+.fm_writes <- "^(write|fwrite|save|ggsave|export|sink$|pdf$|png$|jpeg$|svg$|tiff$)|^(file|dir)\\.create$"
+
+# Relations suggested by the scripts in the folder: every quoted path that
+# points at something else in the folder, labelled by the call around it.
+# The scripts are read as text and never run. Returns `from`, `to` and
+# `label`, with paths relative to `path`.
+.fm_detect <- function(path, scan, max_scripts = 2000, max_size = 1e6) {
+  found <- data.frame(from = character(), to = character(),
+                      label = character(), stringsAsFactors = FALSE)
+  is_script <- !scan$dir & scan$size <= max_size &
+    grepl("\\.(r|rmd|qmd)$", scan$path, ignore.case = TRUE)
+  scripts <- utils::head(scan$path[is_script], max_scripts)
+  if (!length(scripts)) return(found)
+  known <- scan$path
+  # Windows does not tell "Data/A.csv" from "data/a.csv", so neither do we
+  key <- tolower(known)
+
+  out <- lapply(scripts, function(script) {
+    lines <- tryCatch(
+      readLines(file.path(path, script), warn = FALSE, encoding = "UTF-8"),
+      error = function(e) character()
+    )
+    lines <- iconv(lines, "UTF-8", "UTF-8", sub = "")
+    lines <- .fm_join_paths(lines[!is.na(lines)])
+    m <- gregexpr("\"[^\"]*\"|'[^']*'", lines)
+    hits <- regmatches(lines, m)
+    n <- lengths(hits)
+    if (!sum(n)) return(NULL)
+    lit <- unlist(hits)
+    before <- substr(rep(lines, n), 1, unlist(m)[unlist(m) > 0] - 1)
+    lit <- gsub("\\\\+", "/", substr(lit, 2, nchar(lit) - 1))
+    lit <- sub("^\\./", "", sub("/+$", "", lit))
+    # A bare word is more often an argument value than a path
+    ok <- grepl("[/.]", lit) & nchar(lit) > 2
+    if (!any(ok)) return(NULL)
+    lit <- lit[ok]; before <- before[ok]
+
+    dir <- dirname(script)
+    target <- rep(NA_character_, length(lit))
+    tries <- list(lit, if (dir != ".") paste(dir, lit, sep = "/"),
+                  .fm_under(lit, path))
+    for (cand in tries) {
+      if (is.null(cand)) next
+      i <- match(tolower(.fm_squash(cand)), key)
+      target <- ifelse(is.na(target), known[i], target)
+    }
+    keep <- !is.na(target) & target != script
+    if (!any(keep)) return(NULL)
+    target <- target[keep]
+
+    # The call the path is an argument to: the last "name(" still open
+    fn <- sub("^.*::", "", .fm_open_call(before[keep]))
+    reads <- grepl(.fm_reads, fn, ignore.case = TRUE)
+    writes <- grepl(.fm_writes, fn, ignore.case = TRUE)
+    sourced <- grepl("^(sys\\.)?source$", fn)
+    data.frame(
+      from = ifelse(writes, script, target),
+      to = ifelse(writes, target, script),
+      label = ifelse(writes, "writes",
+              ifelse(sourced, "sourced by",
+              ifelse(reads, "input to", "used by"))),
+      stringsAsFactors = FALSE
+    )
+  })
+  found <- rbind(found, do.call(rbind, out))
+  found <- found[!duplicated(found), ]
+  # A path both read and written in one script says more than "used by"
+  pair <- paste(pmin(found$from, found$to), pmax(found$from, found$to))
+  vague <- found$label == "used by" & pair %in% pair[found$label != "used by"]
+  found <- found[!vague, ]
+  rownames(found) <- NULL
+  found
+}
+
+# file.path("data", "raw", "a.csv") and here("data", "a.csv") made of plain
+# strings become the one string they stand for, so they are found like any
+# other path.
+.fm_join_paths <- function(lines) {
+  str <- "(\"[^\"]*\"|'[^']*')"
+  rx <- paste0("\\b(file\\.path|here::here|here)\\(\\s*", str,
+               "(\\s*,\\s*", str, ")*\\s*\\)")
+  m <- gregexpr(rx, lines, perl = TRUE)
+  regmatches(lines, m) <- lapply(regmatches(lines, m), function(calls) {
+    vapply(calls, function(call) {
+      parts <- regmatches(call, gregexpr(str, call))[[1]]
+      parts <- substr(parts, 2, nchar(parts) - 1)
+      paste0('"', paste(parts, collapse = "/"), '"')
+    }, "")
+  })
+  lines
+}
+
+# The name of the innermost call still open at the end of each string.
+.fm_open_call <- function(before) {
+  vapply(before, function(b) {
+    repeat {
+      shorter <- gsub("\\([^()]*\\)", "", b)
+      if (shorter == b) break
+      b <- shorter
+    }
+    m <- regmatches(b, gregexpr("[A-Za-z.][A-Za-z0-9._:]*(?=\\s*\\()", b,
+                                perl = TRUE))[[1]]
+    # read_csv(c("a.csv", "b.csv")): c() only passes the path on
+    m <- m[!sub("^.*::", "", m) %in% .fm_wrappers]
+    if (length(m)) m[[length(m)]] else ""
+  }, "", USE.NAMES = FALSE)
+}
+
+.fm_wrappers <- c("c", "list", "paste", "paste0", "file.path", "here",
+                  "normalizePath", "path", "glue", "sprintf", "invisible",
+                  "suppressMessages", "suppressWarnings", "try", "tryCatch")
+
+# Absolute paths pointing into `root`, made relative to it; NA for the rest.
+.fm_under <- function(p, root) {
+  root <- paste0(tolower(normalizePath(root, winslash = "/")), "/")
+  inside <- startsWith(tolower(p), root)
+  ifelse(inside, substr(p, nchar(root) + 1, nchar(p)), NA_character_)
+}
+
+# Resolve "a/./b" and "a/../b" without touching the disk.
+.fm_squash <- function(p) {
+  p <- gsub("/\\./", "/", gsub("//+", "/", p))
+  repeat {
+    q <- sub("(^|/)[^/]+/\\.\\./", "\\1", p)
+    if (identical(q, p)) break
+    p <- q
+  }
+  sub("^\\./", "", p)
+}
+
 # Notes written before the map moved into pathr (the mappegraf package) use
 # Danish tag names. The page translates them the same way.
 .fm_tag <- function(tag) {
@@ -463,7 +721,8 @@ folder_notes <- function(path = ".",
 #                file explorer (what=explorer)
 # Every route requires a random token, so other web pages in the browser
 # cannot read the folder, overwrite the notes or open files.
-.fm_start_server <- function(path, ignore, notes, show_files = TRUE) {
+.fm_start_server <- function(path, ignore, notes, show_files = TRUE,
+                             gitignore = FALSE, detect = TRUE) {
   .fm_stop_for(path)
   token <- .fm_without_seed(
     paste(sample(c(letters, 0:9), 32, TRUE), collapse = "")
@@ -473,7 +732,8 @@ folder_notes <- function(path = ".",
   page_data <- function() {
     .fm_data(path, ignore, notes, show_files,
              save_url = paste0("save", q), data_url = paste0("data", q),
-             open_url = paste0("open", q), view_url = paste0("view", q))
+             open_url = paste0("open", q), view_url = paste0("view", q),
+             gitignore = gitignore, detect = detect)
   }
   # The scan behind the summary is reused for the first page view, so the
   # folder is not scanned twice at start
@@ -502,7 +762,8 @@ folder_notes <- function(path = ".",
         first <<- NULL
         reply(.fm_html(d), "text/html; charset=utf-8")
       } else if (method == "GET" && route == "/data") {
-        reply(.fm_json(.fm_data(path, ignore, notes)))
+        reply(.fm_json(.fm_data(path, ignore, notes, gitignore = gitignore,
+                                detect = detect)))
       } else if (method == "POST" && route == "/open") {
         p <- .fm_query(req$QUERY_STRING)
         .fm_open(path, p$path %||% "", p$what %||% "open")

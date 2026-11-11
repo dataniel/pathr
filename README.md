@@ -45,9 +45,16 @@ interactive graph in the browser. Unfold what you need, tag what matters,
 write notes, and draw your own relations between folders and files. It all
 lands in `.foldermap.json` inside the folder, so it follows the project.
 
+The map reads your scripts and suggests the relations it can see: the file a
+script reads is "input to" it, the file it saves is one it "writes". You
+add the ones that are right. Color by age to find the dead corners, switch
+to a treemap to see what takes up the room, or show only what you have
+tagged.
+
 ```r
 map_folder("C:/projects/big-project")
 folder_notes("C:/projects/big-project")$relations
+folder_guide("C:/projects/big-project", file = "FOLDERS.md")
 ```
 
 ## Functions
@@ -57,11 +64,13 @@ folder_notes("C:/projects/big-project")$relations
 | `browse_files()` | Yazi-style Shiny file browser: mark files/folders and copy paths, or a call that reads them, to R |
 | `map_folder()` | Interactive map of a folder: unfold it, tag and annotate it, draw relations between folders and files |
 | `folder_notes()` | Read the map's tags, notes and relations back as data frames |
-| `scan_folder()` | The file listing the map is built from |
+| `folder_guide()` | Write the tags, notes and relations up as a Markdown guide to the folder |
+| `scan_folder()` | The file listing the map is built from; `gitignore = TRUE` skips what git ignores |
 | `folder_ignore()` | Names skipped by the scan (`node_modules`, `.git`, ...) |
 | `stop_folder_map()` | Stop the map's local servers |
 | `open_in_explorer()` | Open a folder, or reveal a file, in the system file explorer |
 | `addin_open_in_explorer()` | RStudio addin: open the selected path, the path under the cursor, or `getwd()` in the file explorer |
+| `addin_map_folder()` | RStudio addin: map the selected folder, or the project |
 | `addin_paste_path()` | RStudio addin: paste Windows paths from the clipboard as a quoted R string or a `c(...)` vector |
 | `addin_fix_path()` | RStudio addin: replace backslashes with forward slashes in Windows paths |
 | `addin_flip_backslash()` | RStudio addin: replace all backslashes with forward slashes in the selection |
