@@ -12,6 +12,18 @@ here takes one of those off your plate.
   a keyboard-driven file browser that hands the marked paths back to R –
   or a call that reads them
 
+- **See a whole folder at once:**
+  [`map_folder()`](https://dataniel.github.io/pathr/reference/map_folder.md),
+  an interactive map of a project folder where you tag what matters,
+  write notes and draw your own relations between folders and files – it
+  suggests the ones it can read out of your scripts;
+  [`folder_notes()`](https://dataniel.github.io/pathr/reference/folder_notes.md)
+  reads it all back into R,
+  [`folder_guide()`](https://dataniel.github.io/pathr/reference/folder_guide.md)
+  writes it up, and
+  [`addin_map_folder()`](https://dataniel.github.io/pathr/reference/addin_map_folder.md)
+  opens the map for the project
+
 - **See a path on disk:**
   [`open_in_explorer()`](https://dataniel.github.io/pathr/reference/open_in_explorer.md)
   from the console, and

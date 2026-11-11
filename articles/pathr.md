@@ -99,6 +99,90 @@ my_paths <- c(
 lapply(my_paths, arrow::read_parquet)
 ```
 
+## See the whole folder at once: `map_folder()`
+
+A file browser shows one level at a time. A big project folder with many
+levels is hard to take in that way, and there is nowhere to write down
+what you learn about it.
+[`map_folder()`](https://dataniel.github.io/pathr/reference/map_folder.md)
+draws the whole structure as a graph in the browser:
+
+``` r
+map_folder("C:/projects/big-project")
+```
+
+| To | Do |
+|----|----|
+| Unfold or collapse a folder | double-click |
+| See size, file types, largest and newest files | click |
+| Tag as ★ Core, ◆ Important, ? Unclear or ⌛ Outdated | the buttons in the panel, or the keys `1`–`4` |
+| Write a note | the field in the panel |
+| Draw a relation, such as “input to” | `R` or “Connect to…”, then click the target |
+| Search names, notes and tags | `/` |
+| Copy a path as an R string, forward slashes and all | “Copy for R” |
+| Find the dead corners | “Color”: age |
+| See what takes up the room | “Layout”: treemap |
+| See only what you have tagged, noted or related | “tagged only” |
+
+A relation to something inside a collapsed folder is drawn dashed at the
+nearest visible folder, so relations do not vanish when you collapse.
+
+Drawing every relation by hand is the slow part, so the map suggests
+some. It reads the R, R Markdown and Quarto scripts in the folder for
+quoted paths that point at something else in the folder, and labels them
+by the call around the path: a file given to `read_csv()` is “input to”
+the script, one given to `write_csv()` or `ggsave()` is one the script
+“writes”, a [`source()`](https://rdrr.io/r/base/source.html)d file is
+“sourced by” it. Files with the same name and size are suggested as
+copies. Suggestions are drawn dotted and listed in the panel; they
+become relations when you add them, and a dismissed one is not suggested
+again. The scripts are only read, never run, so a path put together at
+run time is not found. From RStudio, the **Map folder** addin opens the
+map for the project.
+
+What you add is saved in `.foldermap.json` inside the folder. The file
+follows the project, can be shared with colleagues and put under version
+control, and it only changes when you change a tag, a note or a
+relation. What is unfolded and where the nodes sit is remembered per
+folder in your own cache instead, so the map looks the same next time
+without adding noise to version control.
+
+Saving takes a small local server, which needs the **httpuv** package
+(it comes along with shiny). It listens on `127.0.0.1` only and is
+protected by a random token. Nothing is fetched from or sent to the
+internet: the graph library ships with pathr.
+[`stop_folder_map()`](https://dataniel.github.io/pathr/reference/stop_folder_map.md)
+stops the server; otherwise it runs until the R session ends.
+
+[`folder_notes()`](https://dataniel.github.io/pathr/reference/folder_notes.md)
+reads it all back as data frames – to list the core files of a project,
+say, or to find relations whose ends have moved:
+
+``` r
+n <- folder_notes("C:/projects/big-project")
+subset(n$nodes, tag == "core")
+subset(n$relations, !exists)
+```
+
+[`folder_guide()`](https://dataniel.github.io/pathr/reference/folder_guide.md)
+writes the same thing as prose: a short Markdown document with the
+tagged folders and files, their notes, and the relations – for a README,
+or for whoever takes the project over.
+
+``` r
+folder_guide("C:/projects/big-project", file = "FOLDERS.md")
+```
+
+Pass `gitignore = TRUE` to leave out whatever git ignores. It is off by
+default, because the data and output folders a project keeps out of git
+are often exactly what you want to see on the map.
+
+Without a server you get a single self-contained HTML file to pass on:
+
+``` r
+map_folder(".", server = FALSE, file = "folder-map.html")
+```
+
 ## Jump to a file you already have in code: `open_in_explorer()`
 
 The other direction: you have a path in your script and want to see it

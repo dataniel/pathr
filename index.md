@@ -39,17 +39,43 @@ is a keyboard-driven file browser: mark files with `Space`, press
 p <- browse_files()    # navigate, mark with Space, press Q
 ```
 
+**See the whole project at once.**
+[`map_folder()`](https://dataniel.github.io/pathr/reference/map_folder.md)
+opens a folder as an interactive graph in the browser. Unfold what you
+need, tag what matters, write notes, and draw your own relations between
+folders and files. It all lands in `.foldermap.json` inside the folder,
+so it follows the project.
+
+The map reads your scripts and suggests the relations it can see: the
+file a script reads is “input to” it, the file it saves is one it
+“writes”. You add the ones that are right. Color by age to find the dead
+corners, switch to a treemap to see what takes up the room, or show only
+what you have tagged.
+
+``` r
+map_folder("C:/projects/big-project")
+folder_notes("C:/projects/big-project")$relations
+folder_guide("C:/projects/big-project", file = "FOLDERS.md")
+```
+
 ## Functions
 
-| Function                                                                                           | Description                                                                                                                              |
-|----------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------|
-| [`browse_files()`](https://dataniel.github.io/pathr/reference/browse_files.md)                     | Yazi-style Shiny file browser: mark files/folders and copy paths, or a call that reads them, to R                                        |
-| [`open_in_explorer()`](https://dataniel.github.io/pathr/reference/open_in_explorer.md)             | Open a folder, or reveal a file, in the system file explorer                                                                             |
+| Function | Description |
+|----|----|
+| [`browse_files()`](https://dataniel.github.io/pathr/reference/browse_files.md) | Yazi-style Shiny file browser: mark files/folders and copy paths, or a call that reads them, to R |
+| [`map_folder()`](https://dataniel.github.io/pathr/reference/map_folder.md) | Interactive map of a folder: unfold it, tag and annotate it, draw relations between folders and files |
+| [`folder_notes()`](https://dataniel.github.io/pathr/reference/folder_notes.md) | Read the map’s tags, notes and relations back as data frames |
+| [`folder_guide()`](https://dataniel.github.io/pathr/reference/folder_guide.md) | Write the tags, notes and relations up as a Markdown guide to the folder |
+| [`scan_folder()`](https://dataniel.github.io/pathr/reference/scan_folder.md) | The file listing the map is built from; `gitignore = TRUE` skips what git ignores |
+| [`folder_ignore()`](https://dataniel.github.io/pathr/reference/folder_ignore.md) | Names skipped by the scan (`node_modules`, `.git`, …) |
+| [`stop_folder_map()`](https://dataniel.github.io/pathr/reference/stop_folder_map.md) | Stop the map’s local servers |
+| [`open_in_explorer()`](https://dataniel.github.io/pathr/reference/open_in_explorer.md) | Open a folder, or reveal a file, in the system file explorer |
 | [`addin_open_in_explorer()`](https://dataniel.github.io/pathr/reference/addin_open_in_explorer.md) | RStudio addin: open the selected path, the path under the cursor, or [`getwd()`](https://rdrr.io/r/base/getwd.html) in the file explorer |
-| [`addin_paste_path()`](https://dataniel.github.io/pathr/reference/addin_paste_path.md)             | RStudio addin: paste Windows paths from the clipboard as a quoted R string or a `c(...)` vector                                          |
-| [`addin_fix_path()`](https://dataniel.github.io/pathr/reference/addin_fix_path.md)                 | RStudio addin: replace backslashes with forward slashes in Windows paths                                                                 |
-| [`addin_flip_backslash()`](https://dataniel.github.io/pathr/reference/addin_flip_backslash.md)     | RStudio addin: replace all backslashes with forward slashes in the selection                                                             |
-| [`addin_text_to_vector()`](https://dataniel.github.io/pathr/reference/addin_text_to_vector.md)     | RStudio addin: convert selected lines, such as *Copy as path* output, to an R character vector                                           |
+| [`addin_map_folder()`](https://dataniel.github.io/pathr/reference/addin_map_folder.md) | RStudio addin: map the selected folder, or the project |
+| [`addin_paste_path()`](https://dataniel.github.io/pathr/reference/addin_paste_path.md) | RStudio addin: paste Windows paths from the clipboard as a quoted R string or a `c(...)` vector |
+| [`addin_fix_path()`](https://dataniel.github.io/pathr/reference/addin_fix_path.md) | RStudio addin: replace backslashes with forward slashes in Windows paths |
+| [`addin_flip_backslash()`](https://dataniel.github.io/pathr/reference/addin_flip_backslash.md) | RStudio addin: replace all backslashes with forward slashes in the selection |
+| [`addin_text_to_vector()`](https://dataniel.github.io/pathr/reference/addin_text_to_vector.md) | RStudio addin: convert selected lines, such as *Copy as path* output, to an R character vector |
 
 Call the addins from the *Addins* menu or the command palette
 (`Ctrl+Shift+P`), or bind them to a shortcut under *Tools -\> Modify
