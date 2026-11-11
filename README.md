@@ -40,11 +40,26 @@ them, land in your script.
 p <- browse_files()    # navigate, mark with Space, press Q
 ```
 
+**See the whole project at once.** `map_folder()` opens a folder as an
+interactive graph in the browser. Unfold what you need, tag what matters,
+write notes, and draw your own relations between folders and files. It all
+lands in `.foldermap.json` inside the folder, so it follows the project.
+
+```r
+map_folder("C:/projects/big-project")
+folder_notes("C:/projects/big-project")$relations
+```
+
 ## Functions
 
 | Function | Description |
 |----------|-------------|
 | `browse_files()` | Yazi-style Shiny file browser: mark files/folders and copy paths, or a call that reads them, to R |
+| `map_folder()` | Interactive map of a folder: unfold it, tag and annotate it, draw relations between folders and files |
+| `folder_notes()` | Read the map's tags, notes and relations back as data frames |
+| `scan_folder()` | The file listing the map is built from |
+| `folder_ignore()` | Names skipped by the scan (`node_modules`, `.git`, ...) |
+| `stop_folder_map()` | Stop the map's local servers |
 | `open_in_explorer()` | Open a folder, or reveal a file, in the system file explorer |
 | `addin_open_in_explorer()` | RStudio addin: open the selected path, the path under the cursor, or `getwd()` in the file explorer |
 | `addin_paste_path()` | RStudio addin: paste Windows paths from the clipboard as a quoted R string or a `c(...)` vector |

@@ -25,6 +25,14 @@ reference:
       - browse_files
       - open_in_explorer
 
+  - title: Map a folder
+    contents:
+      - map_folder
+      - folder_notes
+      - scan_folder
+      - folder_ignore
+      - stop_folder_map
+
   - title: RStudio addins
     contents:
       - addin_open_in_explorer

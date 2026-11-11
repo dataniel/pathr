@@ -9,6 +9,10 @@
 #' * **Grab a path without typing it:** [browse_files()], a keyboard-driven
 #'   file browser that hands the marked paths back to R -- or a call that
 #'   reads them
+#' * **See a whole folder at once:** [map_folder()], an interactive map of
+#'   a project folder where you tag what matters, write notes and draw your
+#'   own relations between folders and files; [folder_notes()] reads them
+#'   back into R
 #' * **See a path on disk:** [open_in_explorer()] from the console, and
 #'   [addin_open_in_explorer()] from wherever the cursor is
 #' * **Turn pasted Windows paths into valid R:** [addin_paste_path()],
