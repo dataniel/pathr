@@ -160,7 +160,33 @@ test_that("a file name with </script> cannot break the page", {
   skip_on_os("windows") # '<' and '>' are not allowed in file names there
   d <- make_folder()
   file.create(file.path(d, "</script>x"))
-  expect_true(grepl("<\\/script>x", static_map(d), fixed = TRUE))
+  expect_false(grepl("</script>x", static_map(d), fixed = TRUE))
+})
+
+test_that("a note from someone else cannot break the page", {
+  skip_if_not_installed("jsonlite")
+  d <- make_folder()
+  writeLines(
+    '{"nodes":{"project/analysis.R":{"note":"</script><!--<script>alert(1)"}},"relations":[]}',
+    file.path(d, ".foldermap.json")
+  )
+  html <- static_map(d)
+  expect_false(grepl("</script><!--", html, fixed = TRUE))
+  expect_false(grepl("<script>alert(1)", html, fixed = TRUE))
+  expect_true(grepl("\\u003c!--\\u003cscript>alert(1)", html, fixed = TRUE))
+})
+
+test_that("a folder git lists beside its ignored contents stays on the map", {
+  skip_if(Sys.which("git") == "")
+  d <- make_folder()
+  writeLines("*.log", file.path(d, ".gitignore"))
+  dir.create(file.path(d, "logs"))
+  writeLines("x", file.path(d, "logs", "a.log"))
+  writeLines("x", file.path(d, "logs", "b.log"))
+  system2("git", c("-C", shQuote(d), "init", "-q"), stdout = FALSE, stderr = FALSE)
+  s <- scan_folder(d, gitignore = TRUE)$path
+  expect_false(any(grepl("\\.log$", s)))
+  expect_true(all(c("data/raw/a.csv", ".gitignore") %in% s))
 })
 
 # folder_notes --------------------------------------------------------------

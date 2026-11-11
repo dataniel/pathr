@@ -1397,7 +1397,9 @@ browse_files <- function(path = getwd(), root = NULL,
     shiny::observeEvent(input$do_start, go_to_start())
   }
 
-  shiny::runApp(shiny::shinyApp(ui, server), quiet = TRUE)
+  # The host is spelled out: with options(shiny.host = "0.0.0.0"), common on
+  # servers, the browser would otherwise show the disk to the whole network.
+  shiny::runApp(shiny::shinyApp(ui, server), host = "127.0.0.1", quiet = TRUE)
 
   # Deliver the result after the app has closed, so the active document
   # is the user's script/console again, not the app viewer.

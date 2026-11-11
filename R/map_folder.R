@@ -126,8 +126,13 @@ scan_folder <- function(path = ".", ignore = folder_ignore(), max_depth = 60,
   # git also lists a folder when everything in it is ignored, alongside the
   # ignored things themselves. The folder is not ignored, so it stays on the
   # map; a folder that really is ignored is listed without its contents.
-  is_dir <- grepl("/$", out)
-  parent <- vapply(out, function(p) any(startsWith(out, p) & out != p), NA)
+  # Sorted bytewise, whatever lies under a folder follows right after it, so
+  # one comparison with the next entry answers it. Comparing every entry
+  # with every other took minutes with tens of thousands of ignored files.
+  out <- unique(out)
+  out <- out[order(out, method = "radix")]
+  is_dir <- endsWith(out, "/")
+  parent <- c(startsWith(out[-1], out[-length(out)]), FALSE)
   sub("/$", "", out[!(is_dir & parent)])
 }
 
@@ -341,8 +346,10 @@ map_folder <- function(path = ".",
 
 # Put the data into the template and return the whole page as text.
 .fm_html <- function(d) {
-  # "</" is escaped, so a file name can never close the <script> block
-  json <- gsub("</", "<\\/", .fm_json(d), fixed = TRUE)
+  # Every "<" is escaped, so neither a file name nor a note (the notes file
+  # may come from someone else) can close the <script> block with "</script>"
+  # or swallow the rest of the page with "<!--".
+  json <- gsub("<", "\\u003c", .fm_json(d), fixed = TRUE)
   .fm_replace_once(.fm_template(), "/*__FOLDER_MAP_DATA__*/null", json)
 }
 
@@ -502,49 +509,62 @@ folder_guide <- function(path = ".",
       readLines(file.path(path, script), warn = FALSE, encoding = "UTF-8"),
       error = function(e) character()
     )
+    # Only a line with a quote in it can hold a path. Dropping the rest
+    # first spares the regular expressions most of every script.
+    lines <- lines[grepl("[\"']", lines, useBytes = TRUE)]
+    if (!length(lines)) return(NULL)
     lines <- iconv(lines, "UTF-8", "UTF-8", sub = "")
     lines <- .fm_join_paths(lines[!is.na(lines)])
-    m <- gregexpr("\"[^\"]*\"|'[^']*'", lines)
+    m <- gregexpr("\"[^\"]*\"|'[^']*'", lines, perl = TRUE)
     hits <- regmatches(lines, m)
     n <- lengths(hits)
     if (!sum(n)) return(NULL)
     lit <- unlist(hits)
-    before <- substr(rep(lines, n), 1, unlist(m)[unlist(m) > 0] - 1)
+    start <- unlist(m)
+    before <- substr(rep(lines, n), 1, start[start > 0] - 1)
     lit <- gsub("\\\\+", "/", substr(lit, 2, nchar(lit) - 1))
     lit <- sub("^\\./", "", sub("/+$", "", lit))
     # A bare word is more often an argument value than a path
     ok <- grepl("[/.]", lit) & nchar(lit) > 2
     if (!any(ok)) return(NULL)
-    lit <- lit[ok]; before <- before[ok]
-
-    dir <- dirname(script)
-    target <- rep(NA_character_, length(lit))
-    tries <- list(lit, if (dir != ".") paste(dir, lit, sep = "/"),
-                  .fm_under(lit, path))
-    for (cand in tries) {
-      if (is.null(cand)) next
-      i <- match(tolower(.fm_squash(cand)), key)
-      target <- ifelse(is.na(target), known[i], target)
-    }
-    keep <- !is.na(target) & target != script
-    if (!any(keep)) return(NULL)
-    target <- target[keep]
-
-    # The call the path is an argument to: the last "name(" still open
-    fn <- sub("^.*::", "", .fm_open_call(before[keep]))
-    reads <- grepl(.fm_reads, fn, ignore.case = TRUE)
-    writes <- grepl(.fm_writes, fn, ignore.case = TRUE)
-    sourced <- grepl("^(sys\\.)?source$", fn)
-    data.frame(
-      from = ifelse(writes, script, target),
-      to = ifelse(writes, target, script),
-      label = ifelse(writes, "writes",
-              ifelse(sourced, "sourced by",
-              ifelse(reads, "input to", "used by"))),
-      stringsAsFactors = FALSE
-    )
+    list(lit = lit[ok], before = before[ok])
   })
-  found <- rbind(found, do.call(rbind, out))
+  n <- vapply(out, function(o) length(o$lit), 0L)
+  if (!sum(n)) return(found)
+  lit <- unlist(lapply(out, `[[`, "lit"))
+  before <- unlist(lapply(out, `[[`, "before"))
+  script <- rep(scripts, n)
+
+  # The strings of all scripts are looked up together. A lookup indexes
+  # every path in the folder, and doing that once per script was most of
+  # the time in a big folder.
+  dir <- dirname(script)
+  target <- rep(NA_character_, length(lit))
+  tries <- list(lit,
+                ifelse(dir != ".", paste(dir, lit, sep = "/"), NA_character_),
+                .fm_under(lit, path))
+  for (cand in tries) {
+    todo <- is.na(target) & !is.na(cand)
+    target[todo] <- known[match(tolower(.fm_squash(cand[todo])), key)]
+  }
+  keep <- !is.na(target) & target != script
+  if (!any(keep)) return(found)
+  target <- target[keep]
+  script <- script[keep]
+
+  # The call the path is an argument to: the last "name(" still open
+  fn <- sub("^.*::", "", .fm_open_call(before[keep]))
+  reads <- grepl(.fm_reads, fn, ignore.case = TRUE)
+  writes <- grepl(.fm_writes, fn, ignore.case = TRUE)
+  sourced <- grepl("^(sys\\.)?source$", fn)
+  found <- data.frame(
+    from = ifelse(writes, script, target),
+    to = ifelse(writes, target, script),
+    label = ifelse(writes, "writes",
+            ifelse(sourced, "sourced by",
+            ifelse(reads, "input to", "used by"))),
+    stringsAsFactors = FALSE
+  )
   found <- found[!duplicated(found), ]
   # A path both read and written in one script says more than "used by"
   pair <- paste(pmin(found$from, found$to), pmax(found$from, found$to))
@@ -561,14 +581,20 @@ folder_guide <- function(path = ".",
   str <- "(\"[^\"]*\"|'[^']*')"
   rx <- paste0("\\b(file\\.path|here::here|here)\\(\\s*", str,
                "(\\s*,\\s*", str, ")*\\s*\\)")
-  m <- gregexpr(rx, lines, perl = TRUE)
-  regmatches(lines, m) <- lapply(regmatches(lines, m), function(calls) {
+  # Few lines hold such a call, so only those meet the regular expression
+  has <- grepl("file.path(", lines, fixed = TRUE) |
+    grepl("here(", lines, fixed = TRUE)
+  if (!any(has)) return(lines)
+  sub <- lines[has]
+  m <- gregexpr(rx, sub, perl = TRUE)
+  regmatches(sub, m) <- lapply(regmatches(sub, m), function(calls) {
     vapply(calls, function(call) {
       parts <- regmatches(call, gregexpr(str, call))[[1]]
       parts <- substr(parts, 2, nchar(parts) - 1)
       paste0('"', paste(parts, collapse = "/"), '"')
     }, "")
   })
+  lines[has] <- sub
   lines
 }
 
@@ -770,6 +796,7 @@ folder_guide <- function(path = ".",
         reply('{"ok":true}')
       } else if (method == "POST" && route == "/save") {
         raw <- req$rook.input$read()
+        if (length(raw) > 2e7) stop("The notes are too large")
         if (!jsonlite::validate(rawToChar(raw))) stop("Invalid JSON")
         writeBin(raw, notes)
         reply('{"ok":true}')
